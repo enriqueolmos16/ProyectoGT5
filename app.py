@@ -1,41 +1,47 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 from transformers import AutoTokenizer, T5ForConditionalGeneration
 
 app = Flask(__name__)
 
-# Cargar el modelo y el tokenizador en versión TensorFlow
+# Cargar el modelo T5
 nombre_modelo = "t5-large"
-tokenizer = AutoTokenizer.from_pretrained(nombre_modelo)
-model = T5ForConditionalGeneration.from_pretrained(nombre_modelo)
+convertir_vectores = AutoTokenizer.from_pretrained(nombre_modelo)
+modelo = T5ForConditionalGeneration.from_pretrained(nombre_modelo)
+
+@app.route('/')
+def index():
+    return render_template('index.html')
 
 @app.route('/procesar', methods=['POST'])
-def procesar_texto():
-    datos = request.json
-    eleccion = datos.get("eleccion")  # 1: Resumir, 2: Traducir, 3: Preguntar, 4: Generar Preguntas
-    texto = datos.get("texto", "")
-
-    if not texto:
-        return jsonify({"error": "Texto no proporcionado"}), 400
-
+def procesar():
+    data = request.json
+    eleccion = int(data['eleccion'])
+    texto = data['texto']
+    
+    tipo_tarea = ""
+    
     if eleccion == 1:
-        texto = f"summarize: {texto}"
+        tipo_tarea = "summarize: "
     elif eleccion == 2:
-        texto = f"translate English to French: {texto}"
+        tipo_tarea = "translate English to French: "
     elif eleccion == 3:
-        contexto = datos.get("contexto", "")
-        texto = f"question: {texto}. context: {contexto}"
+        contexto = data.get('contexto', '')
+        tipo_tarea = "question: "
+        texto = f"{tipo_tarea} {texto}. context: {contexto}"
     elif eleccion == 4:
-        texto = f"generate questions: {texto}"
-    else:
-        return jsonify({"error": "Opción no válida"}), 400
+        tipo_tarea = "generate questions: "
+    
+    texto = f"{tipo_tarea} {texto}"
+    
+    vectores_entrada = convertir_vectores(texto, return_tensors="pt").input_ids
+    num_preguntas = 5 if eleccion == 4 else 1
+    vectores_salida = modelo.generate(vectores_entrada, max_length=512, num_return_sequences=num_preguntas)
 
-    # Tokenizamos el texto y generamos la respuesta usando tensores de TensorFlow
-    input_ids = tokenizer(texto, return_tensors="tf").input_ids
-    output_ids = model.generate(input_ids, max_length=512)
-    resultado = tokenizer.decode(output_ids[0], skip_special_tokens=True)
-
-    return jsonify({"resultado": resultado})
+    texto_salida = [convertir_vectores.decode(salida, skip_special_tokens=True) for salida in vectores_salida]
+    
+    return jsonify({'resultado': texto_salida})
 
 if __name__ == '__main__':
     app.run(debug=True)
+
 
