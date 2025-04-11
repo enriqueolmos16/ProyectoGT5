@@ -47,16 +47,9 @@
         }
     </style>
     <script>
-        function mostrarCampoContexto() {
-            const eleccion = document.getElementById("eleccion").value;
-            const contextoDiv = document.getElementById("contextoDiv");
-            contextoDiv.style.display = eleccion == "3" ? "block" : "none";
-        }
-
         async function procesarTexto() {
             const texto = document.getElementById("texto").value;
             const eleccion = document.getElementById("eleccion").value;
-            const contexto = document.getElementById("contexto").value;
             const boton = document.getElementById("botonProcesar");
             const resultadoDiv = document.getElementById("resultado");
 
@@ -64,11 +57,13 @@
             boton.innerText = "Procesando...";
             resultadoDiv.innerHTML = `<div class="text-muted">Procesando...</div>`;
 
+            const payload = { texto, eleccion };
+
             try {
                 const respuesta = await fetch("/procesar", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ texto, eleccion, contexto })
+                    body: JSON.stringify(payload)
                 });
 
                 const data = await respuesta.json();
@@ -105,18 +100,13 @@
 
                 <div class="mb-3">
                     <label for="eleccion" class="form-label">Selecciona una opción:</label>
-                    <select id="eleccion" class="form-select" onchange="mostrarCampoContexto()">
+                    <select id="eleccion" class="form-select">
                         <option value="1">Resumir</option>
                         <option value="2">Traducir (Inglés a Francés)</option>
                         <option value="3">Responder una pregunta con contexto</option>
                         <option value="4">Generar 5 preguntas del texto</option>
                         <option value="5">Generar imagen desde descripción</option>
                     </select>
-                </div>
-
-                <div id="contextoDiv" class="mb-3" style="display: none;">
-                    <label for="contexto" class="form-label">Contexto:</label>
-                    <textarea id="contexto" class="form-control" rows="3" placeholder="Ingresa el contexto aquí..."></textarea>
                 </div>
 
                 <div class="d-grid gap-2">

@@ -1,67 +1,37 @@
 from flask import Flask, request, jsonify, render_template
-from transformers import AutoTokenizer, T5ForConditionalGeneration
+from transformers import AutoTokenizer, T5ForConditionalGeneration, MarianMTModel, MarianTokenizer
 from diffusers import StableDiffusionPipeline
 import torch
 from PIL import Image
 
 app = Flask(__name__)
 
-# ========== CARGA DE MODELOS ==========
-modelo_general_nombre = "t5-large"
-tokenizer_general = AutoTokenizer.from_pretrained(modelo_general_nombre)
-modelo_general = T5ForConditionalGeneration.from_pretrained(modelo_general_nombre)
-
-modelo_preguntas_nombre = "mrm8488/t5-base-finetuned-question-generation-ap"
-tokenizer_preguntas = AutoTokenizer.from_pretrained(modelo_preguntas_nombre, use_fast=False)
-modelo_preguntas = T5ForConditionalGeneration.from_pretrained(modelo_preguntas_nombre)
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-modelo_general.to(device)
-modelo_preguntas.to(device)
-
-pipe = StableDiffusionPipeline.from_pretrained("runwayml/stable-diffusion-v1-5", torch_dtype=torch.float32)
+# Imagen
+pipe = StableDiffusionPipeline.from_pretrained(
+    "runwayml/stable-diffusion-v1-5", torch_dtype=torch.float32
+)
+device = "cuda" if torch.cuda.is_available() else "cpu"
 pipe = pipe.to(device)
 
-# ========== FUNCIONES DE PROCESAMIENTO ==========
-def generar_texto(modelo, tokenizer, prompt, max_length=128):
-    inputs = tokenizer(prompt, return_tensors="pt").input_ids.to(device)
-    with torch.no_grad():
-        outputs = modelo.generate(inputs, max_length=max_length)
-    return tokenizer.decode(outputs[0], skip_special_tokens=True)
+# Modelos
+modelo_general = T5ForConditionalGeneration.from_pretrained("t5-large")
+tokenizer_general = AutoTokenizer.from_pretrained("t5-large")
 
-def traducir_texto(texto, origen="Spanish", destino="English"):
-    prompt = f"translate {origen} to {destino}: {texto}"
-    return generar_texto(modelo_general, tokenizer_general, prompt, max_length=128)
+modelo_qg = T5ForConditionalGeneration.from_pretrained("valhalla/t5-base-qg-hl")
+tokenizer_qg = AutoTokenizer.from_pretrained("valhalla/t5-base-qg-hl")
 
-def generar_preguntas(texto_es):
-    # 1. Traducir al inglés
-    texto_en = traducir_texto(texto_es, "Spanish", "English")
+traductor_modelo = MarianMTModel.from_pretrained("Helsinki-NLP/opus-mt-en-es")
+traductor_tokenizer = MarianTokenizer.from_pretrained("Helsinki-NLP/opus-mt-en-es")
 
-    # 2. Generar preguntas en inglés
-    prompt_qg = f"generate 5 questions based on the following text: {texto_en}"
-    inputs = tokenizer_preguntas(prompt_qg, return_tensors="pt").input_ids.to(device)
-    with torch.no_grad():
-        outputs = modelo_preguntas.generate(
-            inputs,
-            max_length=64,
-            num_return_sequences=5,
-            num_beams=5,
-            no_repeat_ngram_size=2,
-            early_stopping=True
-        )
-    preguntas_en = [tokenizer_preguntas.decode(out, skip_special_tokens=True) for out in outputs]
+def traducir_a_espanol(textos):
+    inputs = traductor_tokenizer(textos, return_tensors="pt", padding=True, truncation=True)
+    translated = traductor_modelo.generate(**inputs)
+    return [traductor_tokenizer.decode(t, skip_special_tokens=True) for t in translated]
 
-    # 3. Traducir preguntas al español
-    preguntas_es = [traducir_texto(pregunta, "English", "Spanish") for pregunta in preguntas_en]
-    return preguntas_es
+@app.route('/landing')
+def landing():
+    return render_template('landing.html')
 
-def generar_imagen(prompt):
-    image = pipe(prompt).images[0]
-    path = "static/generated_image.png"
-    image.save(path)
-    return "/" + path
-
-# ========== RUTAS ==========
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -69,35 +39,61 @@ def index():
 @app.route('/procesar', methods=['POST'])
 def procesar():
     data = request.json
-    eleccion = int(data.get('eleccion', 0))
-    texto = data.get('texto', '')
+    eleccion = int(data['eleccion'])
+    texto = data['texto']
 
-    try:
-        if eleccion == 5:
-            return jsonify({'resultado': generar_imagen(texto)})
+    if eleccion == 5:
+        try:
+            image = pipe(texto).images[0]
+            path = "static/generated_image.png"
+            image.save(path)
+            return jsonify({'resultado': "/" + path})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
 
-        elif eleccion == 1:
-            prompt = f"summarize: {texto}"
-            return jsonify({'resultado': [generar_texto(modelo_general, tokenizer_general, prompt)]})
+    # Modelo por defecto
+    tokenizer = tokenizer_general
+    modelo = modelo_general
+    prompt = ""
 
-        elif eleccion == 2:
-            return jsonify({'resultado': [traducir_texto(texto, "English", "French")]})
+    if eleccion == 1:
+        prompt = f"summarize: {texto}"
+    elif eleccion == 2:
+        prompt = f"translate English to French: {texto}"
+    elif eleccion == 3:
+        # Extrae la pregunta y el contexto desde el textarea
+        pregunta = ""
+        contexto = ""
 
-        elif eleccion == 3:
-            contexto = data.get('contexto', '')
-            prompt = f"question: {texto} context: {contexto}"
-            return jsonify({'resultado': [generar_texto(modelo_general, tokenizer_general, prompt)]})
+        lineas = texto.strip().split("\n")
+        for linea in lineas:
+            if linea.lower().startswith("pregunta:"):
+                pregunta = linea[len("pregunta:"):].strip()
+            elif linea.lower().startswith("contexto:"):
+                contexto = linea[len("contexto:"):].strip()
 
-        elif eleccion == 4:
-            preguntas = generar_preguntas(texto)
-            return jsonify({'resultado': preguntas})
+        if not pregunta or not contexto:
+            return jsonify({'error': 'Por favor escribe en el formato:\nPregunta: ¿...? \nContexto: ...'}), 400
 
-        else:
-            return jsonify({'error': 'Elección no válida'}), 400
+        prompt = f"question: {pregunta} context: {contexto}"
+    elif eleccion == 4:
+        # Detecta una frase del texto y la resalta
+        frase = texto.strip().split(".")[0]
+        contexto_hl = texto.replace(frase, f"<hl>{frase}<hl>")
+        prompt = f"generate question: {contexto_hl}"
+        tokenizer = tokenizer_qg
+        modelo = modelo_qg
 
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    inputs = tokenizer(prompt, return_tensors="pt").input_ids
+    num_salidas = 5 if eleccion == 4 else 1
 
-# ========== EJECUCIÓN ==========
+    outputs = modelo.generate(inputs, max_length=128, num_return_sequences=num_salidas, num_beams=num_salidas)
+    respuestas = [tokenizer.decode(o, skip_special_tokens=True) for o in outputs]
+
+    if eleccion == 4:
+        respuestas = traducir_a_espanol(respuestas)
+
+    return jsonify({'resultado': respuestas})
+
 if __name__ == '__main__':
     app.run(debug=True)
