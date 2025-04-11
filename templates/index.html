@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Procesador T5</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #0d1117;
+            color: #c9d1d9;
+        }
+        .card {
+            background-color: #161b22;
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+        }
+        .form-control, .form-select {
+            background-color: #0d1117;
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+        }
+        .form-control::placeholder, .form-select option {
+            color: #8b949e;
+        }
+        .btn-primary {
+            background-color: #238636;
+            border-color: #2ea043;
+        }
+        .btn-primary:hover {
+            background-color: #2ea043;
+        }
+        .list-group-item {
+            background-color: #161b22;
+            color: #c9d1d9;
+            border-color: #30363d;
+        }
+        .alert-danger {
+            background-color: #da3633;
+            color: white;
+            border: none;
+        }
+        img.generated-image {
+            max-width: 100%;
+            border-radius: 10px;
+            margin-top: 15px;
+            border: 1px solid #30363d;
+        }
+    </style>
+    <script>
+        function mostrarCampoContexto() {
+            const eleccion = document.getElementById("eleccion").value;
+            const contextoDiv = document.getElementById("contextoDiv");
+            contextoDiv.style.display = eleccion == "3" ? "block" : "none";
+        }
+
+        async function procesarTexto() {
+            const texto = document.getElementById("texto").value;
+            const eleccion = document.getElementById("eleccion").value;
+            const contexto = document.getElementById("contexto").value;
+            const boton = document.getElementById("botonProcesar");
+            const resultadoDiv = document.getElementById("resultado");
+
+            boton.disabled = true;
+            boton.innerText = "Procesando...";
+            resultadoDiv.innerHTML = `<div class="text-muted">Procesando...</div>`;
+
+            try {
+                const respuesta = await fetch("/procesar", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ texto, eleccion, contexto })
+                });
+
+                const data = await respuesta.json();
+
+                if (eleccion == "5") {
+                    resultadoDiv.innerHTML = `<h5 class="mt-4">Imagen generada:</h5>
+                        <img src="${data.resultado}" alt="Imagen generada" class="generated-image">`;
+                } else {
+                    resultadoDiv.innerHTML = `<h5 class="mt-4">Resultado:</h5>
+                        <ul class="list-group">` +
+                        data.resultado.map(r => `<li class="list-group-item">${r}</li>`).join("") +
+                        `</ul>`;
+                }
+            } catch (error) {
+                resultadoDiv.innerHTML = `<div class="alert alert-danger mt-3">Ocurrió un error al procesar el texto.</div>`;
+                console.error(error);
+            }
+
+            boton.disabled = false;
+            boton.innerText = "Procesar";
+        }
+    </script>
+</head>
+<body>
+    <div class="container py-5">
+        <div class="card shadow-lg">
+            <div class="card-body">
+                <h2 class="card-title text-center mb-4">Procesador de Texto con T5</h2>
+
+                <div class="mb-3">
+                    <label for="texto" class="form-label">Texto / descripción:</label>
+                    <textarea id="texto" class="form-control" rows="5" placeholder="Ingresa el texto aquí..."></textarea>
+                </div>
+
+                <div class="mb-3">
+                    <label for="eleccion" class="form-label">Selecciona una opción:</label>
+                    <select id="eleccion" class="form-select" onchange="mostrarCampoContexto()">
+                        <option value="1">Resumir</option>
+                        <option value="2">Traducir (Inglés a Francés)</option>
+                        <option value="3">Responder una pregunta con contexto</option>
+                        <option value="4">Generar 5 preguntas del texto</option>
+                        <option value="5">Generar imagen desde descripción</option>
+                    </select>
+                </div>
+
+                <div id="contextoDiv" class="mb-3" style="display: none;">
+                    <label for="contexto" class="form-label">Contexto:</label>
+                    <textarea id="contexto" class="form-control" rows="3" placeholder="Ingresa el contexto aquí..."></textarea>
+                </div>
+
+                <div class="d-grid gap-2">
+                    <button id="botonProcesar" class="btn btn-primary" onclick="procesarTexto()">Procesar</button>
+                </div>
+
+                <div id="resultado" class="mt-4"></div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
